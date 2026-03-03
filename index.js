@@ -7,12 +7,50 @@ import {
   checkForReply,
   sendFollowUp
 } from './gmail.js'
+import { google } from 'googleapis'
 import cron from 'node-cron'
 
 const app = express()
 app.use(express.json())
 
-const PORT = 3000
+const PORT = process.env.PORT || 3000
+
+// ===============================
+// HEALTH CHECK ROUTE
+// ===============================
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    message: 'Server is healthy 🚀',
+    timestamp: new Date(),
+    environment: process.env.NODE_ENV || 'production'
+  })
+})
+
+// ===============================
+// TEST SUPABASE CONNECTION
+// ===============================
+app.get('/test-supabase', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('creators')
+      .select('*')
+      .limit(1)
+
+    if (error) throw error
+
+    res.json({
+      status: 'Supabase Connected ✅',
+      sample: data
+    })
+
+  } catch (err) {
+    res.status(500).json({
+      status: 'Error ❌',
+      message: err.message
+    })
+  }
+})
 
 // ===============================
 // FUNCTION: CHECK REPLIES
@@ -43,7 +81,6 @@ async function runReplyCheck() {
     }
   }
 }
-
 
 // ===============================
 // FUNCTION: RUN FOLLOW UPS
@@ -104,14 +141,12 @@ async function runFollowUps() {
   }
 }
 
-
 // ===============================
 // ROOT TEST
 // ===============================
 app.get('/', (req, res) => {
   res.send('Collab System Running 🚀')
 })
-
 
 // ===============================
 // GET ALL CREATORS
@@ -127,7 +162,6 @@ app.get('/creators', async (req, res) => {
 
   res.json(data)
 })
-
 
 // ===============================
 // ADD SINGLE CREATOR
@@ -156,7 +190,6 @@ app.post('/creators', async (req, res) => {
 
   res.json(data)
 })
-
 
 // ===============================
 // BULK IMPORT + AUTO FIRST OUTREACH
@@ -235,96 +268,6 @@ app.post('/creators/bulk', async (req, res) => {
   }
 })
 
-
-// ===============================
-// CHECK REPLIES
-// ===============================
-app.get('/check-replies', async (req, res) => {
-
-  const { data: creators } = await supabase
-    .from('creators')
-    .select('*')
-    .eq('replied', false)
-
-  for (const creator of creators) {
-
-    if (!creator.thread_id) continue
-
-    const hasReply = await checkForReply(creator.thread_id)
-
-    if (hasReply) {
-      await supabase
-        .from('creators')
-        .update({
-          replied: true,
-          status: 'replied'
-        })
-        .eq('id', creator.id)
-    }
-  }
-
-  res.send('Reply check complete')
-})
-
-
-// ===============================
-// RUN FOLLOW UPS
-// ===============================
-app.get('/run-followups', async (req, res) => {
-
-  const { data: creators } = await supabase
-    .from('creators')
-    .select('*')
-    .eq('replied', false)
-
-  const now = new Date()
-
-  for (const creator of creators) {
-
-    if (!creator.last_email_sent || creator.replied) continue
-
-    const lastSent = new Date(creator.last_email_sent)
-    const diffDays = (now - lastSent) / (1000 * 60 * 60 * 24)
-
-    if (creator.follow_up_count === 0 && diffDays >= 2) {
-
-      await sendFollowUp(
-        creator.thread_id,
-        creator.creator_email,
-        1
-      )
-
-      await supabase
-        .from('creators')
-        .update({
-          follow_up_count: 1,
-          last_email_sent: now.toISOString()
-        })
-        .eq('id', creator.id)
-    }
-
-    if (creator.follow_up_count === 1 && diffDays >= 3) {
-
-      await sendFollowUp(
-        creator.thread_id,
-        creator.creator_email,
-        2
-      )
-
-      await supabase
-        .from('creators')
-        .update({
-          follow_up_count: 2,
-          last_email_sent: now.toISOString()
-        })
-        .eq('id', creator.id)
-    }
-  }
-
-  res.send('Follow-up check complete')
-})
-
-
 // ===============================
 // GOOGLE OAUTH
 // ===============================
@@ -339,12 +282,11 @@ app.get('/auth/google/callback', async (req, res) => {
   res.send('Gmail connected successfully. You can close this window.')
 })
 
-
 // ===============================
 // START SERVER
 // ===============================
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`)
+  console.log(`Server running on port ${PORT}`)
 })
 
 // ===============================
